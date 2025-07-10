@@ -19,6 +19,12 @@ from core.generic_types import (
     create_generic_context, infer_domain_from_context
 )
 from core.generic_agent import UniversalGenericAgent
+
+try:
+    from core.llm_integration import LLMConfig, create_llm_config
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
 from domains.domain_adapters import (
     DomainAdapterFactory, adapt_for_domain, validate_domain_decision,
     infer_domain_from_instruction
@@ -32,7 +38,7 @@ class UniversalAgentFactory:
     """Factory for creating specialized universal agents"""
     
     @staticmethod
-    def create_minimal_agent(agent_id: str = "minimal_agent", name: str = "Minimal Agent") -> UniversalGenericAgent:
+    def create_minimal_agent(agent_id: str = "minimal_agent", name: str = "Minimal Agent", api_key: str = None) -> UniversalGenericAgent:
         """Create minimal agent with basic functionality only"""
         config = create_agent_config(
             agent_id=agent_id,
@@ -40,10 +46,19 @@ class UniversalAgentFactory:
             primary_domain=TaskDomain.GENERIC,
             components=create_minimal_config()
         )
-        return UniversalGenericAgent(config)
+        
+        # Create LLM config if available
+        llm_config = None
+        if LLM_AVAILABLE and api_key:
+            try:
+                llm_config = create_llm_config(api_key=api_key)
+            except Exception as e:
+                logging.warning(f"Failed to create LLM config: {e}")
+        
+        return UniversalGenericAgent(config, llm_config)
     
     @staticmethod
-    def create_full_agent(agent_id: str = "full_agent", name: str = "Full Agent") -> UniversalGenericAgent:
+    def create_full_agent(agent_id: str = "full_agent", name: str = "Full Agent", api_key: str = None) -> UniversalGenericAgent:
         """Create agent with all capabilities enabled"""
         config = create_agent_config(
             agent_id=agent_id,
@@ -51,7 +66,16 @@ class UniversalAgentFactory:
             primary_domain=TaskDomain.GENERIC,
             components=create_full_config()
         )
-        return UniversalGenericAgent(config)
+        
+        # Create LLM config if available
+        llm_config = None
+        if LLM_AVAILABLE:
+            try:
+                llm_config = create_llm_config(api_key=api_key)
+            except Exception as e:
+                logging.warning(f"Failed to create LLM config: {e}")
+        
+        return UniversalGenericAgent(config, llm_config)
     
     @staticmethod
     def create_domain_agent(domain: TaskDomain, agent_id: Optional[str] = None, name: Optional[str] = None) -> UniversalGenericAgent:

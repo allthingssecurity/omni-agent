@@ -20,6 +20,12 @@ from core.generic_types import (
     create_generic_context, infer_domain_from_context
 )
 
+try:
+    from core.llm_integration import GPT4oIntegration, LLMConfig, create_llm_config
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
+
 # -------------------------
 # 1. Simple Fallback Implementations
 # -------------------------
@@ -85,6 +91,68 @@ class SimpleGoalInference(GenericGoalInferenceEngine):
         ambiguity_score = sum(1 for indicator in ambiguity_indicators if indicator in instruction.lower())
         
         return min(1.0, ambiguity_score / len(ambiguity_indicators))
+
+class LLMActionGenerator(GenericActionGenerator):
+    """LLM-powered action generation"""
+    
+    def __init__(self, llm_config: Optional[LLMConfig] = None):
+        self.logger = logging.getLogger(__name__)
+        
+        if LLM_AVAILABLE and llm_config:
+            try:
+                self.llm = GPT4oIntegration(llm_config)
+                self.use_llm = True
+                self.logger.info("Initialized Action Generator with GPT-4o integration")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize LLM: {e}. Falling back to simple action generation.")
+                self.llm = None
+                self.use_llm = False
+        else:
+            self.llm = None
+            self.use_llm = False
+    
+    def generate_actions(self, goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> List[GenericAction]:
+        """Generate actions using LLM or fallback to simple generation"""
+        if self.use_llm and self.llm:
+            try:
+                return self._generate_actions_with_llm(goals, context, config)
+            except Exception as e:
+                self.logger.error(f"LLM action generation failed: {e}. Falling back to simple generation.")
+                # Fall through to simple generation
+        
+        return self._generate_actions_simple(goals, context, config)
+    
+    def _generate_actions_with_llm(self, goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> List[GenericAction]:
+        """Generate actions using GPT-4o"""
+        llm_response = self.llm.generate_actions_with_llm(goals, context, config)
+        
+        actions = []
+        for action_data in llm_response.get("candidate_actions", []):
+            try:
+                action = GenericAction(
+                    action_id=action_data["action_id"],
+                    description=action_data["description"],
+                    domain=context.domain,
+                    intent_type=IntentType(action_data["intent_type"]),
+                    parameters=action_data["parameters"],
+                    estimated_effort=action_data["estimated_effort"],
+                    estimated_success_probability=action_data["estimated_success_probability"],
+                    estimated_duration=action_data.get("estimated_duration_minutes"),
+                    prerequisites=action_data.get("prerequisites", []),
+                    outcomes=action_data.get("outcomes", []),
+                    side_effects=action_data.get("side_effects", []),
+                    reversibility=action_data.get("reversibility", 0.5),
+                    resources_required=action_data.get("resources_required", [])
+                )
+                actions.append(action)
+            except (KeyError, ValueError) as e:
+                self.logger.warning(f"Invalid action data from LLM: {action_data}. Error: {e}")
+        
+        return actions
+    
+    def _generate_actions_simple(self, goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> List[GenericAction]:
+        """Simple action generation (fallback)"""
+        return SimpleActionGenerator().generate_actions(goals, context, config)
 
 class SimpleActionGenerator(GenericActionGenerator):
     """Simple action generation without complex simulation"""
@@ -187,15 +255,66 @@ class SimpleDecisionMaker(GenericDecisionMaker):
 # -------------------------
 
 class TheoryOfMindEngine(GenericGoalInferenceEngine):
-    """Advanced Theory of Mind goal inference engine"""
+    """Advanced Theory of Mind goal inference engine with GPT-4o integration"""
     
-    def __init__(self):
+    def __init__(self, llm_config: Optional[LLMConfig] = None):
         self.logger = logging.getLogger(__name__)
         self.few_shot_examples = {}
         self.behavioral_patterns = {}
+        
+        # Initialize LLM integration if available
+        if LLM_AVAILABLE and llm_config:
+            try:
+                self.llm = GPT4oIntegration(llm_config)
+                self.use_llm = True
+                self.logger.info("Initialized Theory of Mind with GPT-4o integration")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize LLM: {e}. Falling back to rule-based inference.")
+                self.llm = None
+                self.use_llm = False
+        else:
+            self.llm = None
+            self.use_llm = False
+            if not LLM_AVAILABLE:
+                self.logger.info("LLM not available. Using rule-based Theory of Mind inference.")
     
     def infer_goals(self, instruction: str, context: GenericContext, config: ComponentConfig) -> List[GenericGoal]:
         """Advanced goal inference using Theory of Mind"""
+        # Use GPT-4o if available, otherwise fall back to rule-based inference
+        if self.use_llm and self.llm:
+            try:
+                return self._infer_goals_with_llm(instruction, context, config)
+            except Exception as e:
+                self.logger.error(f"LLM goal inference failed: {e}. Falling back to rule-based inference.")
+                # Fall through to rule-based inference
+        
+        # Rule-based inference (original implementation)
+        return self._infer_goals_rule_based(instruction, context, config)
+    
+    def _infer_goals_with_llm(self, instruction: str, context: GenericContext, config: ComponentConfig) -> List[GenericGoal]:
+        """Infer goals using GPT-4o"""
+        llm_response = self.llm.infer_goals_with_tom(instruction, context, config)
+        
+        goals = []
+        for goal_data in llm_response.get("inferred_goals", []):
+            try:
+                goal = GenericGoal(
+                    goal_id=goal_data["goal_id"],
+                    description=goal_data["description"],
+                    domain=context.domain,
+                    intent_type=IntentType(goal_data["intent_type"]),
+                    confidence=goal_data["confidence"],
+                    reasoning=goal_data["reasoning"],
+                    priority=goal_data.get("priority", 1)
+                )
+                goals.append(goal)
+            except (KeyError, ValueError) as e:
+                self.logger.warning(f"Invalid goal data from LLM: {goal_data}. Error: {e}")
+        
+        return goals
+    
+    def _infer_goals_rule_based(self, instruction: str, context: GenericContext, config: ComponentConfig) -> List[GenericGoal]:
+        """Rule-based goal inference (fallback)"""
         goals = []
         
         # Step 1: Analyze user mental state
@@ -488,15 +607,66 @@ class TheoryOfMindEngine(GenericGoalInferenceEngine):
 # -------------------------
 
 class DecisionTheoryEngine(GenericDecisionMaker):
-    """Advanced decision making using decision theory"""
+    """Advanced decision making using decision theory with GPT-4o integration"""
     
-    def __init__(self):
+    def __init__(self, llm_config: Optional[LLMConfig] = None):
         self.logger = logging.getLogger(__name__)
+        
+        if LLM_AVAILABLE and llm_config:
+            try:
+                self.llm = GPT4oIntegration(llm_config)
+                self.use_llm = True
+                self.logger.info("Initialized Decision Theory with GPT-4o integration")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize LLM: {e}. Falling back to rule-based decision making.")
+                self.llm = None
+                self.use_llm = False
+        else:
+            self.llm = None
+            self.use_llm = False
     
     def make_decision(self, actions: List[GenericAction], goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> GenericDecision:
         """Make decision using decision theory"""
         if not actions:
             return SimpleDecisionMaker()._create_no_action_decision()
+        
+        # Use GPT-4o if available, otherwise fall back to rule-based decision making
+        if self.use_llm and self.llm:
+            try:
+                return self._make_decision_with_llm(actions, goals, context, config)
+            except Exception as e:
+                self.logger.error(f"LLM decision making failed: {e}. Falling back to rule-based decision making.")
+                # Fall through to rule-based decision making
+        
+        return self._make_decision_rule_based(actions, goals, context, config)
+    
+    def _make_decision_with_llm(self, actions: List[GenericAction], goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> GenericDecision:
+        """Make decision using GPT-4o"""
+        llm_response = self.llm.make_decision_with_dt(actions, goals, context, config)
+        decision_data = llm_response.get("decision_analysis", {})
+        
+        # Find the selected action
+        selected_action_id = decision_data.get("selected_action_id")
+        selected_action = next((a for a in actions if a.action_id == selected_action_id), actions[0] if actions else None)
+        
+        # Find alternative actions
+        alt_action_ids = decision_data.get("alternative_actions", [])
+        alternative_actions = [a for a in actions if a.action_id in alt_action_ids]
+        
+        return GenericDecision(
+            decision_id=f"llm_decision_{int(time.time())}",
+            selected_action=selected_action,
+            alternative_actions=alternative_actions,
+            reasoning=decision_data.get("reasoning", "LLM-based decision"),
+            confidence=decision_data.get("confidence", 0.7),
+            expected_utility=decision_data.get("expected_utility", 0.7),
+            expected_outcomes=selected_action.outcomes if selected_action else [],
+            risk_assessment=decision_data.get("risk_assessment", {}),
+            fallback_plan=decision_data.get("fallback_plan")
+        )
+    
+    def _make_decision_rule_based(self, actions: List[GenericAction], goals: List[GenericGoal], context: GenericContext, config: ComponentConfig) -> GenericDecision:
+        """Make decision using rule-based decision theory (fallback)"""
         
         # Step 1: Calculate expected utility for each action
         utilities = []
@@ -738,9 +908,19 @@ class DecisionTheoryEngine(GenericDecisionMaker):
 class UniversalGenericAgent:
     """Universal agent that can operate in any domain with configurable components"""
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, llm_config: Optional[LLMConfig] = None):
         self.config = config
+        self.llm_config = llm_config
         self.logger = logging.getLogger(__name__)
+        
+        # Initialize LLM configuration if not provided
+        if llm_config is None and LLM_AVAILABLE:
+            try:
+                self.llm_config = create_llm_config()
+                self.logger.info("Created default LLM configuration")
+            except Exception as e:
+                self.logger.warning(f"Failed to create LLM config: {e}")
+                self.llm_config = None
         
         # Initialize components based on configuration
         self._initialize_components()
@@ -749,16 +929,16 @@ class UniversalGenericAgent:
         """Initialize components based on configuration"""
         # Goal inference component
         if self.config.components.enable_theory_of_mind:
-            self.goal_inference = TheoryOfMindEngine()
+            self.goal_inference = TheoryOfMindEngine(self.llm_config)
         else:
             self.goal_inference = SimpleGoalInference()
         
         # Action generation component
-        self.action_generator = SimpleActionGenerator()  # Could be made configurable too
+        self.action_generator = LLMActionGenerator(self.llm_config) if LLM_AVAILABLE and self.llm_config else SimpleActionGenerator()
         
         # Decision making component
         if self.config.components.enable_decision_theory:
-            self.decision_maker = DecisionTheoryEngine()
+            self.decision_maker = DecisionTheoryEngine(self.llm_config)
         else:
             self.decision_maker = SimpleDecisionMaker()
         

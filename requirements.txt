@@ -2,6 +2,9 @@
 numpy>=1.21.0
 dataclasses>=0.8; python_version<"3.7"
 
+# LLM Integration
+openai>=1.0.0
+
 # Optional dependencies for enhanced functionality
 # Uncomment if you want to add these features:
 
